@@ -62,3 +62,17 @@ func (pow *ProofOfWork) Run() (int, []byte) {
 	fmt.Print("\n\n")
 	return nonce, hash[:]
 }
+
+// 验证当前的工作量证明是否有效 应用于挖矿时的验证 而非矿工的验证
+func (pow *ProofOfWork) Validate() bool {
+	var hashInt big.Int
+
+	data := pow.prepareData(pow.block.Nonce)
+	hash := sha256.Sum256(data)
+	hashInt.SetBytes(hash[:])
+
+	// 目前的工作量证明的验证是求块中所有数据的hash再判断其是否符合目标
+	isValid := hashInt.Cmp(pow.target) == -1
+
+	return isValid
+}
