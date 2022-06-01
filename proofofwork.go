@@ -8,7 +8,7 @@ import (
 	"math/big"
 )
 
-const targetBits = 24
+const targetBits = 8
 
 type ProofOfWork struct {
 	block  *Block
@@ -27,7 +27,7 @@ func NewProofOfWork(b *Block) *ProofOfWork {
 func (pow *ProofOfWork) prepareData(nonce int) []byte {
 	data := bytes.Join([][]byte{
 		pow.block.PrevBlockHash,
-		pow.block.Data,
+		pow.block.HashTransactions(),
 		IntToHex(pow.block.Timestamp),
 		IntToHex(int64(targetBits)),
 		IntToHex(int64(nonce)),
@@ -41,7 +41,7 @@ func (pow *ProofOfWork) Run() (int, []byte) {
 	var hash [32]byte
 	MaxNonce := math.MaxInt64
 	nonce := 0
-	fmt.Printf("Mining the block containing \"%s\"\n", pow.block.Data)
+	fmt.Printf("Mining a new block")
 
 	for nonce < MaxNonce {
 		// 拼接nonce对应的byte数据

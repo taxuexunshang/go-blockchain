@@ -5,37 +5,39 @@ import (
 	"crypto/sha256"
 	"encoding/gob"
 	"log"
-	"strconv"
 	"time"
 )
 
 // 仅包含公链的核心结构
 type Block struct {
 	Timestamp     int64
-	Data          []byte
+	Transactions  []*Transaction
 	PrevBlockHash []byte
 	Hash          []byte
 	Nonce         int
 }
 
-func (b *Block) SetHash() {
-	// 将timestamp按照十进制的形式保存为byte数组
-	timestamp := []byte(strconv.FormatInt(b.Timestamp, 10))
-	// 将其余的byte数组合成一个
-	headers := bytes.Join([][]byte{b.PrevBlockHash, b.Data, timestamp}, []byte{})
-	// 计算byte数组对应的sha256 hash
-	hash := sha256.Sum256(headers)
+func (b *Block) HashTransactions() []byte {
+	var txHashes [][]byte
+	var txHash [32]byte
 
-	b.Hash = hash[:]
+	// 将每笔交易取出
+	for _, tx := range b.Transactions {
+		txHashes = append(txHashes, tx.ID)
+	}
+	// 计算所有hash结果拼接起来的sha256
+	txHash = sha256.Sum256(bytes.Join(txHashes, []byte{}))
+
+	return txHash[:]
 }
 
 // 新建创始区块
-func NewGenesisBlock() *Block {
-	return NewBlock("Genesis xiaoyang block", []byte{})
+func NewGenesisBlock(coinbase *Transaction) *Block {
+	return NewBlock([]*Transaction{coinbase}, []byte{})
 }
 
-func NewBlock(data string, PrevBlockHash []byte) *Block {
-	block := &Block{time.Now().Unix(), []byte(data), PrevBlockHash, []byte{}, 0}
+func NewBlock(transcations []*Transaction, PrevBlockHash []byte) *Block {
+	block := &Block{time.Now().Unix(), transcations, PrevBlockHash, []byte{}, 0}
 	pow := NewProofOfWork(block)
 
 	nonce, hash := pow.Run()
@@ -63,8 +65,10 @@ func Deserialize(d []byte) *Block {
 	var block Block
 	decoder := gob.NewDecoder(bytes.NewReader(d))
 	err := decoder.Decode(&block)
+
 	if err != nil {
 		log.Panic(err)
 	}
+
 	return &block
 }
