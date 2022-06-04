@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"crypto/ecdsa"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -177,7 +180,7 @@ func (bc *Blockchain) MineBlock(transcations []*Transaction) {
 }
 
 // 查找包含未使用输出的交易
-func (bc *Blockchain) FindUnspentTransactions(address string) []Transaction {
+func (bc *Blockchain) FindUnspentTransactions(pubKeyHash []byte) []Transaction {
 	var unspetTXs []Transaction
 	// 存储的是交易ID-
 	spentTXOs := make(map[string][]int)
@@ -190,7 +193,8 @@ func (bc *Blockchain) FindUnspentTransactions(address string) []Transaction {
 		// 遍历区块链的每一条交易
 		for _, tx := range block.Transactions {
 			txID := hex.EncodeToString(tx.ID)
-
+			// 由于整个是从后向前遍历的 所以扫描的顺序是先判断输出 再判断输入
+			// 并且根据UTXO的特性，一个transaction中不会出现指向同一个地址的多个输出,故能够通过以下方式找到
 		outputs:
 			// 遍历交易的输出,检查输出有没有作为另一笔交易的输入即可
 			// 遍历区块的输出
@@ -206,7 +210,7 @@ func (bc *Blockchain) FindUnspentTransactions(address string) []Transaction {
 				}
 
 				// 若匹配到一个未使用过的输出 则记录下当前交易 证明当前交易中存在未使用的输出
-				if out.CanBeUnlockedWith(address) {
+				if out.IsLockedWithKey(pubKeyHash) {
 					unspetTXs = append(unspetTXs, *tx)
 				}
 			}
@@ -215,7 +219,7 @@ func (bc *Blockchain) FindUnspentTransactions(address string) []Transaction {
 				// 将所有交易的输入TranscationID,vout放入
 				for _, in := range tx.Vin {
 					// 遍历所有input
-					if in.CanUnlockOutputWith(address) {
+					if in.UseKey(pubKeyHash) {
 						// 将Txid编码
 						inTxID := hex.EncodeToString(in.Txid)
 						// 将当前用户input的Vout存储起来
@@ -235,17 +239,17 @@ func (bc *Blockchain) FindUnspentTransactions(address string) []Transaction {
 }
 
 // 先定义验证当前交易是否合法的函数
-func (bc *Blockchain) FindSpendableOutputs(address string, amount int) (int, map[string][]int) {
+func (bc *Blockchain) FindSpendableOutputs(pubKeyHash []byte, amount int) (int, map[string][]int) {
 	unspentOutputs := make(map[string][]int)
 	// 得到包含未使用Outputs的交易
-	unspentTXs := bc.FindUnspentTransactions(address)
+	unspentTXs := bc.FindUnspentTransactions(pubKeyHash)
 	accumulated := 0
 Work:
 	for _, tx := range unspentTXs {
 		txID := hex.EncodeToString(tx.ID)
 
 		for outIdx, out := range tx.Vout {
-			if out.CanBeUnlockedWith(address) && accumulated < amount {
+			if out.IsLockedWithKey(pubKeyHash) && accumulated < amount {
 				accumulated += out.Value
 				unspentOutputs[txID] = append(unspentOutputs[txID], outIdx)
 
@@ -259,16 +263,67 @@ Work:
 }
 
 // 查找未使用的交易的输出
-func (bc *Blockchain) FindUTXO(address string) []TXOutput {
+func (bc *Blockchain) FindUTXO(pubKeyHash []byte) []TXOutput {
 	var UTXOs []TXOutput
-	unspentTransactions := bc.FindUnspentTransactions(address)
+	unspentTransactions := bc.FindUnspentTransactions(pubKeyHash)
 
 	for _, tx := range unspentTransactions {
 		for _, out := range tx.Vout {
-			if out.CanBeUnlockedWith(address) {
+			if out.IsLockedWithKey(pubKeyHash) {
 				UTXOs = append(UTXOs, out)
 			}
 		}
 	}
 	return UTXOs
+}
+
+// 找到对应ID的交易
+func (bc *Blockchain) FindTransaction(ID []byte) (Transaction, error) {
+	bci := bc.Iterator()
+
+	for {
+		block := bci.Next()
+
+		for _, tx := range block.Transactions {
+			if bytes.Compare(tx.ID, ID) == 0 {
+				return *tx, nil
+			}
+		}
+
+		if len(block.PrevBlockHash) == 0 {
+			break
+		}
+	}
+
+	return Transaction{}, errors.New("Transaction is not found")
+}
+
+// 对交易进行签名的方法
+func (bc *Blockchain) SignTransaction(tx *Transaction, privKey ecdsa.PrivateKey) {
+	prevTXs := make(map[string]Transaction)
+
+	for _, vin := range tx.Vin {
+		prevTX, err := bc.FindTransaction(vin.Txid)
+		if err != nil {
+			log.Panic(err)
+		}
+		prevTXs[hex.EncodeToString(prevTX.ID)] = prevTX
+	}
+
+	tx.Sign(privKey, prevTXs)
+}
+
+// 对交易进行验证
+func (bc *Blockchain) VerifyTransaction(tx *Transaction) bool {
+	prevTXs := make(map[string]Transaction)
+
+	for _, vin := range tx.Vin {
+		prevTX, err := bc.FindTransaction(vin.Txid)
+		if err != nil {
+			log.Panic(err)
+		}
+		prevTXs[hex.EncodeToString(prevTX.ID)] = prevTX
+	}
+
+	return tx.Verify(prevTXs)
 }

@@ -8,7 +8,7 @@ import (
 	"math/big"
 )
 
-const targetBits = 8
+const targetBits = 16
 
 type ProofOfWork struct {
 	block  *Block
