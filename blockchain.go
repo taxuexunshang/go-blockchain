@@ -30,7 +30,7 @@ func dbExists() bool {
 	return true
 }
 
-func NewBlockChain(address string) *Blockchain {
+func NewBlockChain() *Blockchain {
 	if dbExists() == false {
 		fmt.Println("No existing blockchain found. Create one first.")
 		os.Exit(1)
@@ -56,6 +56,60 @@ func NewBlockChain(address string) *Blockchain {
 
 	bc := Blockchain{tip, db}
 	return &bc
+}
+
+func (bc *Blockchain) FindUTXO() map[string]TXOutputs {
+	UTXO := make(map[string]TXOutputs)
+	spentTXOs := make(map[string][]int)
+	bci := bc.Iterator()
+
+	for {
+		// 遍历整条区块链
+		block := bci.Next()
+
+		// 遍历区块链的每一条交易
+		for _, tx := range block.Transactions {
+			txID := hex.EncodeToString(tx.ID)
+			// 由于整个是从后向前遍历的 所以扫描的顺序是先判断输出 再判断输入
+			// 并且根据UTXO的特性，一个transaction中不会出现指向同一个地址的多个输出,故能够通过以下方式找到
+		outputs:
+			// 遍历交易的输出,检查输出有没有作为另一笔交易的输入即可
+			// 遍历区块的输出
+			for outIdx, out := range tx.Vout {
+				if spentTXOs[txID] != nil {
+					// 该交易已存在输入集合中 则证明其以用于交易
+					for _, spentOut := range spentTXOs[txID] {
+						// 匹配到一个使用过的输出则跳过
+						if spentOut == outIdx {
+							continue outputs
+						}
+					}
+				}
+				outs := UTXO[txID]
+				outs.Outputs = append(outs.Outputs, out)
+				// 若匹配到一个未使用过的输出 则记录下当前交易 证明当前交易中存在未使用的输出
+				UTXO[txID] = outs
+			}
+
+			if tx.IsCoinbase() == false {
+				// 将所有交易的输入TranscationID,vout放入
+				for _, in := range tx.Vin {
+					// 遍历所有input
+					inTxID := hex.EncodeToString(in.Txid)
+					// 将当前用户input的Vout存储起来
+					// 存储input的Transcation ID及Vout
+					// 存放在spentTXOs集合中的输出是一定花费过的
+					spentTXOs[inTxID] = append(spentTXOs[inTxID], in.Vout)
+
+				}
+			}
+		}
+		// 区块链到头 则终止循环
+		if len(block.PrevBlockHash) == 0 {
+			break
+		}
+	}
+	return UTXO
 }
 
 // 创建区块链,主要负责创世块的挖矿,首次铸币交易,区块链的持久化
@@ -141,8 +195,14 @@ func (i *BlockchainIntertor) Next() *Block {
 }
 
 // 实现交易区块的挖矿
-func (bc *Blockchain) MineBlock(transcations []*Transaction) {
+func (bc *Blockchain) MineBlock(transcations []*Transaction) *Block {
 	var lastHash []byte
+
+	for _, tx := range transcations {
+		if bc.VerifyTransaction(tx) != true {
+			log.Panic("ERROR: Invalid transaction")
+		}
+	}
 
 	// 查找当前区块链中最后一个块的hash
 	err := bc.db.View(func(tx *bolt.Tx) error {
@@ -161,7 +221,6 @@ func (bc *Blockchain) MineBlock(transcations []*Transaction) {
 	// TODO: 不知道为什么 这个东西会报错 待解决bug
 	err = bc.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(blocksBucket))
-
 		err := b.Put(newBlock.Hash, newBlock.Serialize())
 		if err != nil {
 			log.Panic(err)
@@ -177,6 +236,11 @@ func (bc *Blockchain) MineBlock(transcations []*Transaction) {
 
 		return nil
 	})
+	if err != nil {
+		log.Panic(err)
+	}
+
+	return newBlock
 }
 
 // 查找包含未使用输出的交易
@@ -262,21 +326,6 @@ Work:
 	return accumulated, unspentOutputs
 }
 
-// 查找未使用的交易的输出
-func (bc *Blockchain) FindUTXO(pubKeyHash []byte) []TXOutput {
-	var UTXOs []TXOutput
-	unspentTransactions := bc.FindUnspentTransactions(pubKeyHash)
-
-	for _, tx := range unspentTransactions {
-		for _, out := range tx.Vout {
-			if out.IsLockedWithKey(pubKeyHash) {
-				UTXOs = append(UTXOs, out)
-			}
-		}
-	}
-	return UTXOs
-}
-
 // 找到对应ID的交易
 func (bc *Blockchain) FindTransaction(ID []byte) (Transaction, error) {
 	bci := bc.Iterator()
@@ -315,6 +364,9 @@ func (bc *Blockchain) SignTransaction(tx *Transaction, privKey ecdsa.PrivateKey)
 
 // 对交易进行验证
 func (bc *Blockchain) VerifyTransaction(tx *Transaction) bool {
+	if tx.IsCoinbase() {
+		return true
+	}
 	prevTXs := make(map[string]Transaction)
 
 	for _, vin := range tx.Vin {

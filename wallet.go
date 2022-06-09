@@ -41,10 +41,10 @@ func newKeyPair() (ecdsa.PrivateKey, []byte) {
 func (w Wallet) GetAddress() []byte {
 	pubKeyHash := HashPubKey(w.PublicKey)
 
-	versionPayload := append([]byte{version}, pubKeyHash...)
-	checkSum := checkSum(versionPayload)
+	versionedPayload := append([]byte{version}, pubKeyHash...)
+	checksum := checkSum(versionedPayload)
 
-	fullPayload := append(versionPayload, checkSum...)
+	fullPayload := append(versionedPayload, checksum...)
 	address := Base58Encode(fullPayload)
 
 	return address
@@ -74,7 +74,7 @@ func checkSum(payload []byte) []byte {
 
 func ValidateAddress(address string) bool {
 	// 分离出来原始的校验码 之后通过已有信息重新计算校验码
-	pubKeyHash := Base58Encode([]byte(address))
+	pubKeyHash := Base58Decode([]byte(address))
 	// 分离出校验码
 	actualChecksum := pubKeyHash[len(pubKeyHash)-addressChecksumLen:]
 	// 分离出版本号
@@ -84,5 +84,5 @@ func ValidateAddress(address string) bool {
 	// 重新计算校验码
 	targetChecksum := checkSum(append([]byte{version}, pubKeyHash...))
 	// 验证校验码是否合法
-	return bytes.Equal(actualChecksum, targetChecksum)
+	return bytes.Compare(actualChecksum, targetChecksum) == 0
 }

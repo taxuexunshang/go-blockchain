@@ -186,7 +186,13 @@ func NewCoinbaseTX(to, data string) *Transaction {
 	// 如果没有指定铸币交易的data
 	// 则默认将铸币交易的data设置为奖励 to
 	if data == "" {
-		data = fmt.Sprintf("Reward to '%s'", to)
+		randData := make([]byte, 20)
+		_, err := rand.Read(randData)
+		if err != nil {
+			log.Panic(err)
+		}
+
+		data = fmt.Sprintf("%x", randData)
 	}
 
 	txin := TXInput{[]byte{}, -1, nil, []byte(data)}
@@ -197,7 +203,7 @@ func NewCoinbaseTX(to, data string) *Transaction {
 	return &tx
 }
 
-func NewUTXOTransction(from, to string, amount int, bc *Blockchain) *Transaction {
+func NewUTXOTransction(from, to string, amount int, UTXOSet *UTXOset) *Transaction {
 	var inputs []TXInput
 	var outputs []TXOutput
 
@@ -205,10 +211,11 @@ func NewUTXOTransction(from, to string, amount int, bc *Blockchain) *Transaction
 	if err != nil {
 		log.Panic(err)
 	}
+
 	wallet := wallets.GetWallet(from)
 	pubKeyHash := HashPubKey(wallet.PublicKey)
 	// 验证输入的币是否足够支付输出
-	acc, validOutputs := bc.FindSpendableOutputs(pubKeyHash, amount)
+	acc, validOutputs := UTXOSet.FindSpendableOutputs(pubKeyHash, amount)
 
 	if acc < amount {
 		log.Panic("ERROR: Not enough funds")
@@ -233,9 +240,10 @@ func NewUTXOTransction(from, to string, amount int, bc *Blockchain) *Transaction
 		// 增加一个找零输出
 		outputs = append(outputs, *NewTXOutput(acc-amount, from)) // a change
 	}
+
 	tx := Transaction{nil, inputs, outputs}
 	tx.ID = tx.Hash()
-	bc.SignTransaction(&tx, wallet.PrivateKey)
+	UTXOSet.Blockchain.SignTransaction(&tx, wallet.PrivateKey)
 
 	return &tx
 

@@ -12,21 +12,38 @@ type CLI struct{}
 
 // 创建一个区块链
 func (cli *CLI) createBlockchain(address string) {
+	if !ValidateAddress(address) {
+		log.Panic("ERROR: Address is not valid")
+	}
 	bc := CreateBlockChain(address)
-	bc.db.Close()
-	fmt.Println("Dnoe!")
+	defer bc.db.Close()
+
+	UTXOset := UTXOset{bc}
+	UTXOset.Reindex()
+
+	fmt.Println("Done!")
+}
+
+func (cli *CLI) reindexUTXO() {
+	bc := NewBlockChain()
+	UTXOset := UTXOset{bc}
+	UTXOset.Reindex()
+
+	count := UTXOset.CountTransactions()
+	fmt.Printf("Done! There are %d transactions in the UTXO set.\n", count)
 }
 
 // 查找当前账户的余额
 func (cli *CLI) getBalance(address string) {
-	bc := NewBlockChain(address)
+	bc := NewBlockChain()
+	UTXOSet := UTXOset{bc}
 	defer bc.db.Close()
 
 	// 找到未使用的UTXO
 	balance := 0
 	pubKeyHash := Base58Decode([]byte(address))
 	pubKeyHash = pubKeyHash[1 : len(pubKeyHash)-4]
-	UTXOs := bc.FindUTXO(pubKeyHash)
+	UTXOs := UTXOSet.FindUTXO(pubKeyHash)
 
 	for _, out := range UTXOs {
 		balance += out.Value
@@ -66,6 +83,7 @@ func (cli *CLI) printUsage() {
 	fmt.Println("  send -from FROM -to TO -amount AMOUNT - Send AMOUNT of coins from FROM address to TO")
 	fmt.Println("  listaddresses - Lists all addresses from the wallet file")
 	fmt.Println("  createwallet - Generates a new key-pair and saves it into the wallet file")
+	fmt.Println("  reindexutxo - Rebuilds the UTXO set")
 }
 
 // 简单的参数校验 仅验证是否小于2
@@ -79,7 +97,7 @@ func (cli *CLI) validateArgs() {
 }
 
 func (cli *CLI) printChain() {
-	bc := NewBlockChain("")
+	bc := NewBlockChain()
 	defer bc.db.Close()
 
 	bci := bc.Iterator()
@@ -100,11 +118,27 @@ func (cli *CLI) printChain() {
 }
 
 func (cli *CLI) send(from, to string, amount int) {
-	bc := NewBlockChain(from)
+	// 增加地址校验机制
+	if !ValidateAddress(from) {
+		log.Panic("ERROR: Sender address is not valid")
+	}
+
+	if !ValidateAddress(to) {
+		log.Panic("ERROR: Recipient address is not valid")
+	}
+
+	bc := NewBlockChain()
+	UTXOset := UTXOset{bc}
 	defer bc.db.Close()
 
-	tx := NewUTXOTransction(from, to, amount, bc)
-	bc.MineBlock([]*Transaction{tx})
+	// 实现出块奖励
+	tx := NewUTXOTransction(from, to, amount, &UTXOset)
+	cbTx := NewCoinbaseTX(from, "")
+	txs := []*Transaction{cbTx, tx}
+
+	newBlock := bc.MineBlock(txs)
+
+	UTXOset.Update(newBlock)
 	fmt.Println("Success!")
 }
 
@@ -118,6 +152,7 @@ func (cli *CLI) Run() {
 	printChainCmd := flag.NewFlagSet("printchain", flag.ExitOnError)
 	createWalletCmd := flag.NewFlagSet("createwallet", flag.ExitOnError)
 	listAddressesCmd := flag.NewFlagSet("listaddresses", flag.ExitOnError)
+	reindexUTXOCmd := flag.NewFlagSet("reindexutxo", flag.ExitOnError)
 
 	getBalanceAddress := getBalanceCmd.String("address", "", "The address to get balance for")
 	createBlockchainAddress := createBlockchainCmd.String("address", "", "The address to send genesis block reward to")
@@ -151,11 +186,19 @@ func (cli *CLI) Run() {
 		if err != nil {
 			log.Panic(err)
 		}
+
 	case "listaddresses":
 		err := listAddressesCmd.Parse(os.Args[2:])
 		if err != nil {
 			log.Panic(err)
 		}
+
+	case "reindexutxo":
+		err := reindexUTXOCmd.Parse(os.Args[2:])
+		if err != nil {
+			log.Panic(err)
+		}
+
 	default:
 		cli.printUsage()
 		os.Exit(1)
@@ -187,6 +230,10 @@ func (cli *CLI) Run() {
 
 	if printChainCmd.Parsed() {
 		cli.printChain()
+	}
+
+	if reindexUTXOCmd.Parsed() {
+		cli.reindexUTXO()
 	}
 
 	if sendCmd.Parsed() {

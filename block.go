@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/gob"
 	"log"
 	"time"
@@ -17,18 +16,16 @@ type Block struct {
 	Nonce         int
 }
 
+// 将hash的计算方法改为默克尔树
 func (b *Block) HashTransactions() []byte {
-	var txHashes [][]byte
-	var txHash [32]byte
+	var transactions [][]byte
 
-	// 将每笔交易取出
 	for _, tx := range b.Transactions {
-		txHashes = append(txHashes, tx.ID)
+		transactions = append(transactions, tx.Serialize())
 	}
-	// 计算所有hash结果拼接起来的sha256
-	txHash = sha256.Sum256(bytes.Join(txHashes, []byte{}))
+	mTree := NewMerkleTree(transactions)
 
-	return txHash[:]
+	return mTree.RootNode.Data
 }
 
 // 新建创始区块
